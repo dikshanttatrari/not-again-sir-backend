@@ -429,8 +429,16 @@ app.put("/api/auth/update", async (req, res) => {
 
 app.post("/api/time-table", async (req, res) => {
   try {
-    const { semester, day, startTime, endTime, subject, professor, room } =
-      req.body;
+    const {
+      semester,
+      day,
+      startTime,
+      endTime,
+      subject,
+      professor,
+      room,
+      batch,
+    } = req.body;
 
     const newClass = new TimeTable({
       semester,
@@ -440,6 +448,7 @@ app.post("/api/time-table", async (req, res) => {
       subject,
       professor,
       room,
+      batch,
     });
 
     const savedClass = await newClass.save();
@@ -466,7 +475,10 @@ app.get("/api/time-table", async (req, res) => {
       }
     }
 
-    const schedule = await TimeTable.find({ semester });
+    const schedule = await TimeTable.find({ semester }).populate(
+      "professor",
+      "name department profileImage"
+    );
 
     res.json({
       success: true,
@@ -799,7 +811,11 @@ app.get("/api/dashboard/student", async (req, res) => {
 
 app.get("/api/dashboard/teacher", async (req, res) => {
   try {
-    const { teacherName } = req.query;
+    const { teacherId } = req.query;
+
+    if (!teacherId) {
+      return res.status(400).json({ error: "Teacher ID is required" });
+    }
 
     const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     const now = new Date();
@@ -807,9 +823,8 @@ app.get("/api/dashboard/teacher", async (req, res) => {
     const currentDay = days[currentDayIndex];
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
-    // 1. Get Today's Classes
     const todaysClasses = await TimeTable.find({
-      professor: { $regex: new RegExp(teacherName, "i") },
+      professor: teacherId,
       day: currentDay,
     });
 
@@ -819,44 +834,37 @@ app.get("/api/dashboard/teacher", async (req, res) => {
 
     let nextSession = null;
     let isHappeningNow = false;
-    let isTomorrow = false; // Flag to track if it's tomorrow's class
+    let isTomorrow = false;
 
-    // 2. Find next class for TODAY
     for (const cls of todaysClasses) {
       if (parseTime(cls.endTime) > currentMinutes) {
         nextSession = cls;
         break;
       }
     }
-
-    // 🟢 3. IF NO CLASS TODAY, CHECK TOMORROW
     if (!nextSession) {
-      // Calculate next day index (wrap around 7)
       const nextDayIndex = (currentDayIndex + 1) % 7;
       const nextDay = days[nextDayIndex];
 
       const tomorrowClasses = await TimeTable.find({
-        professor: { $regex: new RegExp(teacherName, "i") },
+        professor: teacherId,
         day: nextDay,
       });
 
-      // Sort by earliest time
       tomorrowClasses.sort(
         (a, b) => parseTime(a.startTime) - parseTime(b.startTime)
       );
 
       if (tomorrowClasses.length > 0) {
-        nextSession = tomorrowClasses[0]; // Pick the first class of tomorrow
+        nextSession = tomorrowClasses[0];
         isTomorrow = true;
       }
     }
 
-    // 4. Prepare Response
     if (nextSession) {
       const startMinutes = parseTime(nextSession.startTime);
       const endMinutes = parseTime(nextSession.endTime);
 
-      // Only check "Live" status if it's NOT tomorrow
       if (!isTomorrow) {
         isHappeningNow = startMinutes <= currentMinutes;
       }
@@ -876,11 +884,10 @@ app.get("/api/dashboard/teacher", async (req, res) => {
           venue: `Room ${nextSession.room}`,
           task: "Lecture Delivery",
 
-          // 🟢 Updated Status Text logic
           statusText: isHappeningNow
             ? "Session in Progress"
             : isTomorrow
-            ? "Tomorrow's First Class" // Show this if it's tomorrow
+            ? "Tomorrow's First Class"
             : "Upcoming Session",
 
           subText: isHappeningNow
@@ -897,7 +904,7 @@ app.get("/api/dashboard/teacher", async (req, res) => {
         nextSession: null,
         message: "No upcoming sessions.",
         subText: "No classes scheduled for today or tomorrow.",
-        stats: teacherStats,
+        // stats: teacherStats, // Ensure this variable exists in your scope or remove it
       });
     }
   } catch (error) {
@@ -941,6 +948,7 @@ const parseExcelDate = (dateVal) => {
 };
 
 app.post("/api/students/upload", upload.single("file"), async (req, res) => {
+  console.log("File Upload Request Received");
   try {
     if (!req.file) {
       return res
@@ -1116,7 +1124,6 @@ app.delete("/api/students/:id", async (req, res) => {
 
 app.get("/api/batches", async (req, res) => {
   try {
-    // Sort by name or creation date
     const batches = await Batch.find().sort({ name: -1 });
     res.json({ success: true, data: batches });
   } catch (err) {
@@ -1241,30 +1248,18 @@ const normalizeName = (name) => {
 
 app.get("/api/teacher/active-class", async (req, res) => {
   try {
-    let { day, time, teacherName } = req.query;
+    let { day, time, teacherId } = req.query;
 
-    if (!day || !time || !teacherName) {
+    if (!day || !time || !teacherId) {
       return res.json({ success: false, message: "Missing params" });
     }
 
-    const decodedName = decodeURIComponent(teacherName);
-    const cleanTeacherName = normalizeName(decodedName);
     const currentMinutes = parseTime(time);
+    const myClasses = await TimeTable.find({
+      day: day,
+      professor: teacherId,
+    }).sort({ startTime: 1 });
 
-    const todaysClasses = await mongoose.connection
-      .collection("timetables")
-      .find({ day }) // e.g., "Mon", "Tue"
-      .sort({ startTime: 1 }) // Sort chronologically (9AM, 10AM...)
-      .toArray();
-
-    // 3. Filter for THIS Teacher
-    const myClasses = todaysClasses.filter((cls) => {
-      const cleanProfName = normalizeName(cls.professor || "");
-      return (
-        cleanProfName.includes(cleanTeacherName) ||
-        cleanTeacherName.includes(cleanProfName)
-      );
-    });
     if (myClasses.length === 0) {
       return res.json({
         success: false,
@@ -1272,7 +1267,6 @@ app.get("/api/teacher/active-class", async (req, res) => {
       });
     }
 
-    // 4. Categorize Classes
     const active = [];
     const upcoming = [];
     const completed = [];
@@ -1282,23 +1276,18 @@ app.get("/api/teacher/active-class", async (req, res) => {
       const end = parseTime(cls.endTime);
 
       if (currentMinutes >= start && currentMinutes <= end) {
-        active.push({ ...cls, status: "LIVE" });
+        active.push({ ...cls.toObject(), status: "LIVE" });
       } else if (currentMinutes < start) {
-        upcoming.push({ ...cls, status: "UPCOMING" });
+        upcoming.push({ ...cls.toObject(), status: "UPCOMING" });
       } else {
-        completed.push({ ...cls, status: "COMPLETED" });
+        completed.push({ ...cls.toObject(), status: "COMPLETED" });
       }
     });
 
-    // 5. Smart Sort Order: [Active, ...Upcoming, ...Completed(Reverse)]
-    // This puts the "Live" class first, then what's next, then history.
-    const sortedClasses = [
-      ...active,
-      ...upcoming,
-      ...completed.reverse(), // Show most recent completed class first
-    ];
+    // 4. Smart Sort Order
+    const sortedClasses = [...active, ...upcoming, ...completed.reverse()];
 
-    // 6. Map to Response Format
+    // 5. Map to Response
     const responseData = sortedClasses.map((cls) => {
       let label = "UPCOMING CLASS";
       if (cls.status === "LIVE") label = "HAPPENING NOW (Live)";
@@ -1309,9 +1298,10 @@ app.get("/api/teacher/active-class", async (req, res) => {
         sem: cls.semester,
         batch: cls.batch || "Class",
         label: label,
-        status: cls.status, // Send status to frontend for styling if needed
+        status: cls.status,
         startTime: cls.startTime,
         endTime: cls.endTime,
+        room: cls.room, // Added room just in case you need it
       };
     });
 
@@ -1335,14 +1325,19 @@ app.get("/api/schedule", async (req, res) => {
         data: [],
       });
     }
-
-    const allClasses = await TimeTable.find({ day }).sort({ startTime: 1 });
+    const allClasses = await TimeTable.find({ day })
+      .populate("professor", "name profileImage")
+      .sort({ startTime: 1 });
 
     let myClasses = allClasses;
+
     if (teacherName) {
       const cleanInput = normalizeName(teacherName);
+
       myClasses = allClasses.filter((cls) => {
-        const cleanProf = normalizeName(cls.professor || "");
+        const profName = cls.professor?.name || "";
+        const cleanProf = normalizeName(profName);
+
         return cleanProf.includes(cleanInput) || cleanInput.includes(cleanProf);
       });
     }
@@ -1353,7 +1348,6 @@ app.get("/api/schedule", async (req, res) => {
     res.status(500).json({ success: false });
   }
 });
-
 // 2. MARK HOLIDAY (Toggle)
 app.post("/api/holidays", async (req, res) => {
   try {
@@ -1741,6 +1735,42 @@ app.post("/api/library/issue", async (req, res) => {
   }
 });
 
+app.put("/api/library/edit/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { title, author, isbn, qty, category } = req.body;
+
+    const book = await LibraryBook.findById(id);
+    if (!book)
+      return res
+        .status(404)
+        .json({ success: false, message: "Book not found" });
+
+    // Adjust quantities
+    const newTotalQty = parseInt(qty);
+    const qtyDifference = newTotalQty - book.totalQty;
+
+    book.title = title || book.title;
+    book.author = author || book.author;
+    book.isbn = isbn || book.isbn;
+    book.category = category || book.category;
+    book.totalQty = newTotalQty;
+    book.availableQty = book.availableQty + qtyDifference;
+
+    if (book.availableQty < 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot reduce stock below issued amount.",
+      });
+    }
+
+    await book.save();
+    res.json({ success: true, message: "Book updated", data: book });
+  } catch (err) {
+    res.status(500).json({ success: false, error: "Server Error" });
+  }
+});
+
 app.post("/api/library/return", async (req, res) => {
   try {
     const { transactionId } = req.body;
@@ -1800,6 +1830,7 @@ app.post("/api/library/return", async (req, res) => {
 app.get("/api/student/attendance/dashboard", async (req, res) => {
   try {
     const { id } = req.query;
+    console.log("Attendance Dashboard Request for Student ID:", id);
 
     if (!id) {
       return res
@@ -1881,6 +1912,7 @@ app.get("/api/student/attendance/dashboard", async (req, res) => {
       ...item,
       history: item.history.map((status) => (status === true ? "P" : "A")),
     }));
+    console.log("Attendance Dashboard Data:", formattedData);
 
     res.json({ success: true, data: formattedData });
   } catch (err) {
@@ -2039,22 +2071,16 @@ app.delete("/api/exams/:id", async (req, res) => {
 
 app.get("/api/teachers", async (req, res) => {
   try {
-    // 1. Fetch Teachers
-    // Sort: isHOD (-1 = true first), then Name (1 = A-Z)
     const teachers = await UserModel.find({ role: "teacher" })
       .select("-password -otp -otpExpires")
       .sort({ isHOD: -1, name: 1 });
-
-    // 2. Format Data
     const formattedTeachers = teachers.map((t) => ({
       id: t._id,
       name: t.name,
-      // Use designation (e.g. "Assistant Prof"), fallback to "Faculty"
       role: t.designation || "Faculty Member",
       department: t.department || "Computer Science",
       email: t.email,
       phone: t.phone || "",
-      // Use profileImage from schema. If empty, send null (Frontend handles initials)
       image: t.profileImage || null,
       about: t.bio || "No information available.",
       isHOD: t.isHOD || false,
@@ -2064,5 +2090,96 @@ app.get("/api/teachers", async (req, res) => {
   } catch (err) {
     console.error("Fetch Teachers Error:", err);
     res.status(500).json({ success: false, message: "Server Error" });
+  }
+});
+
+app.post("/api/promote-batch", async (req, res) => {
+  try {
+    const graduated = await Student.updateMany(
+      {
+        semester: 6,
+        role: "student",
+      },
+      {
+        $set: { role: "alumni", semester: 0 },
+      }
+    );
+
+    const promoted = await Student.updateMany(
+      {
+        role: "student",
+        semester: { $lt: 6 },
+      },
+      {
+        $inc: { semester: 1 },
+      }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Batch promotion successful!",
+      data: {
+        graduatedCount: graduated.modifiedCount,
+        promotedCount: promoted.modifiedCount,
+      },
+    });
+  } catch (error) {
+    console.error("Promotion Error:", error);
+    res.status(500).json({ success: false, error: "Promotion failed." });
+  }
+});
+
+app.get("/api/teachers/tt", async (req, res) => {
+  try {
+    const { role } = req.query;
+    const filter = role ? { role } : {};
+    const users = await UserModel.find(filter)
+      .select("name _id department profileImage")
+      .sort({ name: 1 });
+
+    res.status(200).json({
+      success: true,
+      count: users.length,
+      data: users,
+    });
+  } catch (error) {
+    console.error("Error fetching users:", error);
+    res.status(500).json({ success: false, error: "Server Error" });
+  }
+});
+
+app.get("/api/weekly-holidays", async (req, res) => {
+  try {
+    const { start, end } = req.query;
+    console.log("Received start:", start, "end:", end);
+    const targetDates = [];
+    let current = new Date(start);
+    const stop = new Date(end);
+
+    while (current <= stop) {
+      const d = current.getDate().toString().padStart(2, "0");
+      const m = (current.getMonth() + 1).toString().padStart(2, "0");
+      const y = current.getFullYear();
+      targetDates.push(`${d}-${m}-${y}`); // Push "12-01-2026"
+
+      current.setDate(current.getDate() + 1);
+    }
+
+    // 2. Find holidays that match ANY of these 7 strings
+    const holidays = await Holiday.find({
+      date: { $in: targetDates }, // $in is perfect for this
+    });
+
+    // 3. Convert results BACK to YYYY-MM-DD for the Frontend
+    // The frontend expects YYYY-MM-DD to compare easily
+    const holidayDates = holidays.map((h) => {
+      const [dd, mm, yyyy] = h.date.split("-");
+      return `${yyyy}-${mm}-${dd}`;
+    });
+
+    res.json({ success: true, data: holidayDates });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, error: err.message });
   }
 });

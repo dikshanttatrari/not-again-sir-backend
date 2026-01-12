@@ -6,4 +6,6 @@ const holidaySchema = new mongoose.Schema({
   markedBy: { type: String },
 });
 
+holidaySchema.index({ date: 1 });
+
 module.exports = mongoose.model("Holiday", holidaySchema);

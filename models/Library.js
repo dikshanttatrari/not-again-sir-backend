@@ -13,6 +13,9 @@ const BookSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+BookSchema.index({ title: "text", author: "text" });
+BookSchema.index({ category: 1 });
+
 const TransactionSchema = new mongoose.Schema(
   {
     bookId: {
@@ -28,11 +31,9 @@ const TransactionSchema = new mongoose.Schema(
     studentName: String,
     studentRoll: String,
     bookTitle: String,
-
     issueDate: { type: Date, default: Date.now },
     dueDate: { type: Date, required: true },
     returnDate: { type: Date },
-
     status: {
       type: String,
       enum: ["ISSUED", "RETURNED", "OVERDUE"],
@@ -41,6 +42,9 @@ const TransactionSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+TransactionSchema.index({ studentId: 1, status: 1 });
+TransactionSchema.index({ status: 1, dueDate: 1 });
 
 const LibraryBook = mongoose.model("LibraryBook", BookSchema);
 const LibraryTransaction = mongoose.model(

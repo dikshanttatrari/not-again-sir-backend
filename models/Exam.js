@@ -18,4 +18,8 @@ const examSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
 });
 
+examSchema.index({ semester: 1, batch: 1, date: 1 });
+examSchema.index({ teacherId: 1 });
+examSchema.index({ batch: 1, date: 1, time: 1 }, { unique: true });
+
 module.exports = mongoose.model("Exam", examSchema);

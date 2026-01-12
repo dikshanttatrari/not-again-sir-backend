@@ -27,25 +27,13 @@ const NoticeSchema = new mongoose.Schema({
     role: { type: String, default: "Faculty" },
     id: { type: mongoose.Schema.ObjectId, ref: "User", required: true },
   },
-  isPinned: {
-    type: Boolean,
-    default: false,
-  },
-  isUrgent: {
-    type: Boolean,
-    default: false,
-  },
-  attachmentUrl: {
-    type: String,
-    default: null,
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now,
-    expires: 604800,
-  },
+  isPinned: { type: Boolean, default: false },
+  isUrgent: { type: Boolean, default: false },
+  attachmentUrl: { type: String, default: null },
+  createdAt: { type: Date, default: Date.now, expires: 604800 },
 });
 
+NoticeSchema.index({ isPinned: -1, createdAt: -1 });
 NoticeSchema.index({ target: 1 });
 
 module.exports = mongoose.model("Notice", NoticeSchema);

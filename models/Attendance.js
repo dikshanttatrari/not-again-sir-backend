@@ -5,6 +5,8 @@ const attendanceSchema = new mongoose.Schema({
   batch: { type: String, required: true },
   subject: { type: String, required: true },
   teacherId: { type: String },
+  startTime: { type: String, required: true },
+
   records: [
     {
       student: { type: mongoose.Schema.Types.ObjectId, ref: "Student" },
@@ -13,6 +15,9 @@ const attendanceSchema = new mongoose.Schema({
   ],
 });
 
-attendanceSchema.index({ date: 1, batch: 1, subject: 1 }, { unique: true });
+attendanceSchema.index(
+  { date: 1, batch: 1, subject: 1, startTime: 1 },
+  { unique: true }
+);
 
 module.exports = mongoose.model("Attendance", attendanceSchema);

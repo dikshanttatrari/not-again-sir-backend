@@ -6,7 +6,7 @@ const studentSchema = new mongoose.Schema({
   universityRollNo: { type: String, required: true, unique: true },
   classRollNo: { type: String, required: true },
   batch: { type: String, required: true },
-  semester: { type: String, required: true },
+  semester: { type: Number, required: true },
   mobile: { type: String, default: "" },
   email: { type: String, default: "" },
   dob: { type: String, required: true },
@@ -16,5 +16,6 @@ const studentSchema = new mongoose.Schema({
   profileImage: { type: String, default: "" },
   isHOD: { type: Boolean, default: false },
 });
+studentSchema.index({ semester: 1, batch: 1 });
 
 module.exports = mongoose.model("Student", studentSchema);
