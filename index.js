@@ -803,9 +803,11 @@ app.get("/api/dashboard/teacher", async (req, res) => {
 
     const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     const now = new Date();
-    const currentDay = days[now.getDay()];
+    const currentDayIndex = now.getDay();
+    const currentDay = days[currentDayIndex];
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
+    // 1. Get Today's Classes
     const todaysClasses = await TimeTable.find({
       professor: { $regex: new RegExp(teacherName, "i") },
       day: currentDay,
@@ -816,6 +818,10 @@ app.get("/api/dashboard/teacher", async (req, res) => {
     );
 
     let nextSession = null;
+    let isHappeningNow = false;
+    let isTomorrow = false; // Flag to track if it's tomorrow's class
+
+    // 2. Find next class for TODAY
     for (const cls of todaysClasses) {
       if (parseTime(cls.endTime) > currentMinutes) {
         nextSession = cls;
@@ -823,47 +829,38 @@ app.get("/api/dashboard/teacher", async (req, res) => {
       }
     }
 
-    const teacherStats = [
-      {
-        id: 1,
-        label: "Scheduled",
-        value: `${todaysClasses.length} Classes`,
-        icon: "human-male-board",
-        color: "#2dd4bf",
-        desc: "Today's Load",
-      },
-      {
-        id: 2,
-        label: "Pending Tasks",
-        value: "5 Papers",
-        icon: "file-document-edit-outline",
-        color: "#f472b6",
-        desc: "Grading Review",
-      },
-      {
-        id: 3,
-        label: "Library",
-        value: "1 Issued",
-        icon: "book-open-variant",
-        color: "#60a5fa",
-        desc: "Reference Books",
-      },
-      {
-        id: 4,
-        label: "Leaves",
-        value: "12 Remaining",
-        icon: "beach",
-        color: "#34d399",
-        desc: "Annual Balance",
-      },
-    ];
+    // 🟢 3. IF NO CLASS TODAY, CHECK TOMORROW
+    if (!nextSession) {
+      // Calculate next day index (wrap around 7)
+      const nextDayIndex = (currentDayIndex + 1) % 7;
+      const nextDay = days[nextDayIndex];
 
+      const tomorrowClasses = await TimeTable.find({
+        professor: { $regex: new RegExp(teacherName, "i") },
+        day: nextDay,
+      });
+
+      // Sort by earliest time
+      tomorrowClasses.sort(
+        (a, b) => parseTime(a.startTime) - parseTime(b.startTime)
+      );
+
+      if (tomorrowClasses.length > 0) {
+        nextSession = tomorrowClasses[0]; // Pick the first class of tomorrow
+        isTomorrow = true;
+      }
+    }
+
+    // 4. Prepare Response
     if (nextSession) {
       const startMinutes = parseTime(nextSession.startTime);
       const endMinutes = parseTime(nextSession.endTime);
-      const isHappeningNow = startMinutes <= currentMinutes;
 
-      // 🕒 CALCULATE PROGRESS
+      // Only check "Live" status if it's NOT tomorrow
+      if (!isTomorrow) {
+        isHappeningNow = startMinutes <= currentMinutes;
+      }
+
       let progress = 0;
       if (isHappeningNow) {
         const totalDuration = endMinutes - startMinutes;
@@ -878,21 +875,28 @@ app.get("/api/dashboard/teacher", async (req, res) => {
           time: `${nextSession.startTime} - ${nextSession.endTime}`,
           venue: `Room ${nextSession.room}`,
           task: "Lecture Delivery",
+
+          // 🟢 Updated Status Text logic
           statusText: isHappeningNow
             ? "Session in Progress"
+            : isTomorrow
+            ? "Tomorrow's First Class" // Show this if it's tomorrow
             : "Upcoming Session",
+
           subText: isHappeningNow
             ? "Lecture is live"
-            : "Please ensure materials are ready.",
+            : isTomorrow
+            ? `Scheduled for ${days[(currentDayIndex + 1) % 7]}`
+            : `Starts at ${nextSession.startTime}`,
+
           progress: progress,
         },
-        stats: teacherStats,
       });
     } else {
       res.json({
         nextSession: null,
         message: "No upcoming sessions.",
-        subText: "You have no further classes scheduled for today.",
+        subText: "No classes scheduled for today or tomorrow.",
         stats: teacherStats,
       });
     }
@@ -1261,11 +1265,6 @@ app.get("/api/teacher/active-class", async (req, res) => {
         cleanTeacherName.includes(cleanProfName)
       );
     });
-
-    console.log(
-      `Found ${myClasses.length} total classes for ${decodedName} on ${day}.`
-    );
-
     if (myClasses.length === 0) {
       return res.json({
         success: false,
@@ -1406,14 +1405,11 @@ app.post("/api/holidays", async (req, res) => {
 app.post("/api/auth/save-token", async (req, res) => {
   try {
     const { userId, role, token } = req.body;
-    console.log("Saving token for:", userId, role, token);
 
     if (role === "student") {
       await Student.findByIdAndUpdate(userId, { pushToken: token });
-      console.log("Saved token for student:", userId);
     } else {
       await UserModel.findByIdAndUpdate(userId, { pushToken: token });
-      console.log("Saved token for user:", userId);
     }
 
     res.json({ success: true, message: "Token saved" });
@@ -1819,7 +1815,6 @@ app.get("/api/student/attendance/dashboard", async (req, res) => {
     }
 
     const studentObjectId = new mongoose.Types.ObjectId(id);
-    console.log("Fetching attendance for student ID:", studentObjectId);
 
     const attendanceStats = await Attendance.aggregate([
       {
@@ -1943,10 +1938,6 @@ app.post("/api/teacher/exam/assign", async (req, res) => {
       batch: batch,
       pushToken: { $exists: true },
     });
-
-    console.log(
-      `Notifying ${students.length} students about new exam: ${title}`
-    );
 
     const tokens = students
       .map((s) => s.pushToken)
